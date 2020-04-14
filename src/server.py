@@ -121,7 +121,10 @@ def maps():
 @map_blueprint.route('/<string:map_path>/')
 def map(map_path):
     filename = os.path.join(maps_root, map_path, 'index.json')
-    return send_file(filename)
+    if os.path.exists(filename):
+        return send_file(filename)
+    else:
+        abort(404, 'Missing index file...')
 
 @map_blueprint.route('/<string:map_path>/tilejson')
 def tilejson_base(map_path):
@@ -142,7 +145,10 @@ def vector_tiles_layer(map_path, layer, z, y, x):
 @map_blueprint.route('/<string:map_path>/style')
 def style(map_path):
     filename = os.path.join(maps_root, map_path, 'style.json')
-    return send_file(filename)
+    if os.path.exists(filename):
+        return send_file(filename)
+    else:
+        abort(404, 'Missing style file...')
 
 @map_blueprint.route('/<string:map_path>/images/<string:image>')
 def map_background(map_path, image):

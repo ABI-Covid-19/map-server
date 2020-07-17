@@ -15,10 +15,11 @@
 		},
 		"nz-data": {
       		"type": "vector",
-      		"url": "http://localhost:4328/nz-data/tilejson"
+      		"url": "/nz-data/tilejson"
     	}
 	},
-	"layers" : [{
+	"layers" : [
+		{
             "id" : "background",
 			"type" : "background",
 			"paint" : {
@@ -25967,15 +25968,45 @@
 				"text-halo-width" : 1.5
 			}
 		}, {
-			"id": "nz-data/supermarkets",
-			"type": "circle",
-			"source": "nz-data",
-			"source-layer": "supermarkets",
-			"minzoom": 6,
-			"paint": {
-				"circle-color": "red",
-				"circle-radius": 4
-			}
+		    "id": "nz-data/population-density",
+		    "type": "heatmap",
+		    "source": "nz-data",
+		  	"source-layer": "population_density",
+		    "minzoom": 8,
+		    "paint":
+		    {
+		        "heatmap-weight": ["get", "normalised_total"],
+		        // Color ramp for heatmap.  Domain is 0 (low) to 1 (high).
+		        // Begin color ramp at 0-stop with a 0-transparancy color
+		        // to create a blur-like effect.
+		        "heatmap-color": [
+		            "interpolate",
+		            ["linear"],
+		            ["heatmap-density"],
+		            0,
+		            "rgba(33,102,172,0)",
+		            0.2,
+		            "rgb(103,169,207)",
+		            0.4,
+		            "rgb(209,229,240)",
+		            0.6,
+		            "rgb(253,219,199)",
+		            0.8,
+		            "rgb(239,138,98)",
+		            1,
+		            "rgb(178,24,43)"
+		        ],
+		        // Adjust the heatmap radius by zoom level
+		        "heatmap-radius": [
+		            "interpolate",
+		            ["linear"],
+		            ["zoom"],
+		            0,
+		            2,
+		            12,
+		            20
+		        ]
+		    }
 		}, {
 		  	"id": "nz-data/dhb-boundary",
 		  	"type": "line",
@@ -25989,6 +26020,56 @@
 		    	"line-color": "rgb(218, 9, 241)",
 		    	"line-opacity": 0.6
 		  	}
+		}, {
+			"id": "nz-data/supermarkets",
+			"type": "circle",
+			"source": "nz-data",
+			"source-layer": "supermarkets",
+			"minzoom": 6,
+			"paint": {
+				"circle-color": "yellow",
+				"circle-radius": 5
+			}
+		}, {
+			"id": "nz-data/ece",
+			"type": "circle",
+			"source": "nz-data",
+			"source-layer": "early_childhood",
+			"minzoom": 7,
+			"paint": {
+				"circle-color": "green",
+				"circle-radius": 6
+			}
+		}, {
+			"id": "nz-data/schools",
+			"type": "circle",
+			"source": "nz-data",
+			"source-layer": "schools",
+			"minzoom": 7,
+			"paint": {
+				"circle-color": "blue",
+				"circle-radius": 6
+			}
+		}, {
+			"id": "nz-data/hospitals",
+			"type": "circle",
+			"source": "nz-data",
+			"source-layer": "hospitals",
+			"minzoom": 7,
+			"paint": {
+				"circle-color": "red",
+				"circle-radius": 6
+			}
+		}, {
+			"id": "nz-data/aged_care",
+			"type": "circle",
+			"source": "nz-data",
+			"source-layer": "aged_care",
+			"minzoom": 7,
+			"paint": {
+				"circle-color": "pink",
+				"circle-radius": 6
+			}
 		}
 	]
 }

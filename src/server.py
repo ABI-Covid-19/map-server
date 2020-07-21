@@ -35,6 +35,11 @@ from landez.sources import MBTilesReader, ExtractionError, InvalidFormatError
 
 #===============================================================================
 
+import celeryapp
+import socketio
+
+#===============================================================================
+
 from PIL import Image
 
 def blank_tile():
@@ -190,6 +195,87 @@ def image_tiles(request, map_path, layer, z, y, x):
     except (InvalidFormatError, sqlite3.OperationalError):
         exceptions.abort(404, 'Cannot read tile database')
     return response.raw(blank_tile(), headers={'Content-Type': 'image/png'})
+
+#===============================================================================
+
+__sessions = {}
+
+sio = socketio.AsyncServer(async_mode='sanic', cors_allowed_origins=[])
+sio.attach(app)
+
+@sio.event
+async def connect(sid, data):
+    #print('Connect:', sid, data)
+    if 'HTTP_ORIGIN' in data:
+        if sid not in __sessions:
+            ## SERVER_URL ???
+            __sessions[sid] = {'host': 'http://{}'.format(data.get('HTTP_HOST'))}
+    elif 'HTTP_KEY' in data:
+        __sessions[data['HTTP_KEY']]['simulation'] = sid
+
+@sio.event
+async def disconnect(sid):
+    if sid in __sessions:
+        del __sessions[sid]
+
+
+def __send_message(msg_type, data, room):
+    return sio.emit('msg', {'type': msg_type, 'data': data}, room=room)
+
+
+@sio.event
+async def msg(sid, msg):
+    if msg.get('type') in ['data', 'metadata']:
+        if msg.get('key') in __sessions:  # ==> message from worker
+            await __send_message(msg['type'], msg['data'], msg['key'])
+
+    elif msg.get('type') == 'control':
+        msg_data = msg.get('data', {})
+        control_type = msg_data.get('type')
+        action = msg_data.get('action')
+
+        if msg.get('key') in __sessions:  # ==> message from worker
+            if control_type == 'simulation':
+                if msg_data.get('action') == 'closedown':
+                    await __send_message('control', {
+                        'type': 'simulation',
+                        'action': 'stopped'
+                    }, msg['key'])
+                    await sio.disconnect(sid)
+
+        elif sid in __sessions:           # ==> message from browser
+            session = __sessions[sid]
+            if control_type == 'mouse':   # Example only...
+                if action == 'click':
+                    lng_lat = msg_data.get('data')
+                    geojson = {
+                        'type': 'FeatureCollection',
+                        'features': [
+                            { 'type': 'Feature',
+                              'geometry': {
+                                  'type': 'Point',
+                                  'coordinates': [ lng_lat['lng'], lng_lat['lat']]
+                                }
+                            }
+                        ]
+                    }
+                    await __send_message('data', {
+                        'type': 'geojson',
+                        'data': json.dumps(geojson)
+                    }, sid)
+            elif control_type == 'simulation':
+                if action == 'start':
+                    celeryapp.app.send_task('simulations.transportation.run', kwargs={
+                        ## SERVER_URL
+                        'host': session['host'],
+                        'key': sid,
+                        'params': msg_data.get('data')
+                        })
+                elif action == 'stop' and 'simulation' in session:
+                    await __send_message('control', {
+                        'type': 'simulation',
+                        'action': 'stop'
+                    }, session['simulation'])
 
 
 #===============================================================================

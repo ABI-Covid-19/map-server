@@ -290,8 +290,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='A web-server for maps.')
     parser.add_argument('--debug', action='store_true',
                         help="run in debugging mode (NOT FOR PRODUCTION)")
-    parser.add_argument('--port', type=int, metavar='PORT', default=4328,
-                        help='the port to listen on (default 4328)')
+    parser.add_argument('--port', type=int, metavar='PORT', default=4329,
+                        help='the port to listen on (default 4329)')
 
     args = parser.parse_args()
 

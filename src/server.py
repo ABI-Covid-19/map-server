@@ -295,6 +295,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    app.run(debug=args.debug, host='localhost', port=args.port)
+    ## Shouldn't we be using SERVER_URL ????
+    app.run(debug=args.debug, host='localhost', port=args.port, access_log=False)
+    ## Make `access_log` a runtime option...
 
 #===============================================================================

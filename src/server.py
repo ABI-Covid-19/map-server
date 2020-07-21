@@ -18,17 +18,18 @@
 #
 #===============================================================================
 
-import io
 import json
 import os.path
 import pathlib
 import sqlite3
-import zlib
 
 #===============================================================================
 
-from flask import abort, Blueprint, Flask, jsonify, make_response, request, send_file
-from flask_cors import CORS
+from sanic import Blueprint, Sanic, exceptions
+import sanic.response as response
+from sanic_cors import CORS
+
+#===============================================================================
 
 from landez.sources import MBTilesReader, ExtractionError, InvalidFormatError
 
@@ -37,22 +38,30 @@ from landez.sources import MBTilesReader, ExtractionError, InvalidFormatError
 from PIL import Image
 
 def blank_tile():
-    tile = Image.new('RGBA', (1, 1), color=(255, 255, 255, 0))
-    file = io.BytesIO()
-    tile.save(file, 'png')
-    file.seek(0)
-    return file
+    return Image.new('RGBA', (1, 1), color=(255, 255, 255, 0))
 
 #===============================================================================
 
-map_blueprint = Blueprint('map', __name__, url_prefix='/', static_folder='static',
-                          root_path=os.path.dirname(os.path.abspath(__file__)))
+from urllib.parse import urljoin
 
-maps_root = os.path.normpath(os.path.join(map_blueprint.root_path, '../maps'))
+## This needs to be in a config file or a runtime parameter...
+## c.f. `port`??
+## SERVER_URL = 'https://celldl.org/abi-covid-19/data/'
+SERVER_URL = 'http://localhost:4329/'
+
+def server_url(url):
+    return urljoin(SERVER_URL, url[1:] if url.startswith('/') else url)
 
 #===============================================================================
 
-app = Flask(__name__)
+map_blueprint = Blueprint('map', url_prefix='/')
+
+maps_root = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../maps'))
+
+#===============================================================================
+
+app = Sanic('map-server')
+app.blueprint(map_blueprint)
 
 CORS(map_blueprint)
 
@@ -74,16 +83,15 @@ def tilejson(map_path, layer):
         tilejson['minzoom'] = int(metadata['minzoom'])
         tilejson['format'] = 'pbf'
         tilejson['scheme'] = 'xyz'
-        tilejson['tiles'] = [ '{}{}{}/mvtiles/{{z}}/{{x}}/{{y}}'
-                                .format(request.url_root, map_path,
-                                        '/{}'.format(layer) if layer else '') ]
+        tilejson['tiles'] = [ server_url('{}{}/mvtiles/{{z}}/{{x}}/{{y}}'
+                                .format(map_path, '/{}'.format(layer) if layer else '')) ]
         tilejson['vector_layers'] = json.loads(metadata['json'])['vector_layers']
-        return jsonify(tilejson)
+        return response.json(tilejson)
     except ExtractionError:
         pass
     except (InvalidFormatError, sqlite3.OperationalError):
-        abort(404, 'Cannot read tile database')
-    return make_response('', 204)
+        exceptions.abort(404, 'Cannot read tile database')
+    return response.empty(status=204)
 
 #===============================================================================
 
@@ -92,20 +100,20 @@ def vector_tiles(map_path, layer, z, y, x):
         mbtiles = os.path.join(maps_root, map_path, 'index.mbtiles')
         reader = MBTilesReader(mbtiles)
         tile = reader.tile(z, x, y)
-        response = send_file(io.BytesIO(tile), mimetype='application/x-protobuf')
+        headers={'Content-Type': 'application/x-protobuf'}
         if tile[0:2] == b'\x1f\x8b':
-            response.headers['Content-Encoding'] = 'gzip';
-        return response
+            headers['Content-Encoding'] = 'gzip';
+        return response.raw(tile, headers=headers)
     except ExtractionError:
         pass
     except (InvalidFormatError, sqlite3.OperationalError):
-        abort(404, 'Cannot read tile database')
-    return make_response('', 204)
+        exceptions.abort(404, 'Cannot read tile database')
+    return response.empty(status=204)
 
 #===============================================================================
 
 @map_blueprint.route('/')
-def maps():
+async def maps(request):
     map_list = []
     for map_dir in pathlib.Path(maps_root).iterdir():
         index = map_dir.joinpath('index.json')
@@ -116,59 +124,73 @@ def maps():
             with open(index) as f:
                 if json.load(f).get('id') == id:
                     map_list.append({'id': id})
-    return jsonify(map_list)
+    return response.json(map_list)
 
-@map_blueprint.route('/<string:map_path>/')
-def map(map_path):
+@map_blueprint.route('/<map_path>/')
+async def map(request, map_path):
     filename = os.path.join(maps_root, map_path, 'index.json')
     if os.path.exists(filename):
-        return send_file(filename)
+        return await response.file(filename)
     else:
-        abort(404, 'Missing index file...')
+        exceptions.abort(404, 'Missing index file...')
 
-@map_blueprint.route('/<string:map_path>/tilejson')
-def tilejson_base(map_path):
+@map_blueprint.route('/<map_path>/tilejson')
+async def tilejson_base(request, map_path):
     return tilejson(map_path, '')
 
-@map_blueprint.route('/<string:map_path>/<string:layer>/tilejson')
-def tilejson_layer(map_path, layer):
+@map_blueprint.route('/<map_path>/<layer>/tilejson')
+async def tilejson_layer(request, map_path, layer):
     return tilejson(map_path, layer)
 
-@map_blueprint.route('/<string:map_path>/mvtiles/<int:z>/<int:x>/<int:y>')
-def vector_tiles_base(map_path, z, y, x):
-    return vector_tiles(map_path, '', z, y, x)
+@map_blueprint.route('/<map_path>/mvtiles/<z>/<x>/<y>')
+def vector_tiles_base(request, map_path, z, y, x):
+    return vector_tiles(map_path, '', int(z), int(y), int(x))
 
-@map_blueprint.route('/<string:map_path>/<string:layer>/mvtiles/<int:z>/<int:x>/<int:y>')
-def vector_tiles_layer(map_path, layer, z, y, x):
-    return vector_tiles(map_path, layer, z, y, x)
+@map_blueprint.route('/<map_path>/<layer>/mvtiles/<z>/<x>/<y>')
+def vector_tiles_layer(request, map_path, layer, z, y, x):
+    return vector_tiles(map_path, layer, int(z), int(y), int(x))
 
-@map_blueprint.route('/<string:map_path>/style')
-def style(map_path):
+@map_blueprint.route('/<map_path>/style')
+async def style(request, map_path):
     filename = os.path.join(maps_root, map_path, 'style.json')
     if os.path.exists(filename):
-        return send_file(filename)
+        with open(filename) as style_data:
+            style = json.load(style_data)
+            # Resolve URLs
+            for (name, source) in style['sources'].items():
+                if 'url' in source:
+                    source['url'] = server_url(source['url'])
+                if 'tiles' in source:
+                    tiles = []
+                    for url in source['tiles']:
+                        tiles.append(server_url(url))
+                    source['tiles'] = tiles
+#        print(style)
+        return response.json(style)
     else:
-        abort(404, 'Missing style file...')
+        exceptions.abort(404, 'Missing style file...')
 
-@map_blueprint.route('/<string:map_path>/images/<string:image>')
-def map_background(map_path, image):
+@map_blueprint.route('/<map_path>/images/<image>')
+async def map_background(request, map_path, image):
     filename = os.path.join(maps_root, map_path, 'images', image)
     if os.path.exists(filename):
-        return send_file(filename)
+        return await response.file(filename)
     else:
-        abort(404, 'Missing image: {}'.format(filename))
+        exceptions.abort(404, 'Missing image: {}'.format(filename))
 
-@map_blueprint.route('/<string:map_path>/tiles/<string:layer>/<int:z>/<int:x>/<int:y>')
-def image_tiles(map_path, layer, z, y, x):
+@map_blueprint.route('/<map_path>/tiles/<layer>/<z>/<x>/<y>')
+def image_tiles(request, map_path, layer, z, y, x):
     try:
         mbtiles = os.path.join(maps_root, map_path, '{}.mbtiles'.format(layer))
         reader = MBTilesReader(mbtiles)
-        return send_file(io.BytesIO(reader.tile(z, x, y)), mimetype='image/png')
+        return response.raw(reader.tile(int(z), int(y), int(x)),
+                            headers={'Content-Type': 'image/png'})
     except ExtractionError:
         pass
     except (InvalidFormatError, sqlite3.OperationalError):
-        abort(404, 'Cannot read tile database')
-    return send_file(blank_tile(), mimetype='image/png')
+        exceptions.abort(404, 'Cannot read tile database')
+    return response.raw(blank_tile(), headers={'Content-Type': 'image/png'})
+
 
 #===============================================================================
 
